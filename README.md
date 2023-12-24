@@ -15,7 +15,7 @@
 
 ### 01_Blob 🔵
 
-* Distorted spheres are rendered using signed distance functions and ray marching. 
+* Distorted spheres are rendered using signed distance functions and ray marching.
 * The spheres are blend together with smooth min function. You can find more information about smooth min functions in this article: [link](https://iquilezles.org/articles/smin/)
 * The amount of steps the ray went before hitting the blobs is used to brighten the edges.
 
