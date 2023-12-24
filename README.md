@@ -20,3 +20,9 @@
 * The amount of steps the ray went before hitting the blobs is used to brighten the edges.
 
 ![image](https://github.com/Zsupi/Shader/assets/73688652/da71211e-6c39-4b55-a9d5-1cad2be6c95b)
+
+### 02_Planet 🌍
+
+> [!CAUTION]
+>
+> * To be defined
