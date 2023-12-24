@@ -6,6 +6,11 @@
 > * Use the [GLSL Lint](https://marketplace.visualstudio.com/items?itemName=dtoplak.vscode-glsllint) extension for linting.
 > * Install the [glslCanvas](https://marketplace.visualstudio.com/items?itemName=circledev.glsl-canvas) visual studio code extension tp see the results of the shaders.
 
+## Contribution
+
+* If you have any great idea to upgrade a shader, feel free to create a new pull request.
+* Write a description about your change into an issue that you may attach to your pull request.
+
 ## Projects
 
 ### 01_Blob 🔵
