@@ -8,15 +8,29 @@
 #define EPSILON			0.0001
 #define N_SPHEARE       5
 #define MAX_STEP        1000
+#define MAX_BOUNCE      4
+
+#define REFLECT         1
+#define REFRACT         2
+#define SOLID           3
+#define BACKGROUND      3
 
 #define rx 1.0 / min(u_resolution.x, u_resolution.y)
 #define uv gl_FragCoord.xy / u_resolution.xy
 #define st coord(gl_FragCoord.xy)
 #define mx coord(u_mouse)
+#define sdfnormal(func, p, size) normalize(vec3( func(p + vec3(+0.05, 0.0, 0.0), size) - func(p + vec3(-0.05, 0.0, 0.0), size), func(p + vec3(0.0, +0.05, 0.0), size) - func(p + vec3(0.0, -0.05, 0.0), size), func(p + vec3(0.0, 0.0, +0.05), size) - func(p + vec3(0.0, 0.0, -0.05), size)))
 
 uniform vec2 u_resolution;
 uniform vec2 u_mouse;
 uniform float u_time;
+
+struct SdfObject {
+    int type;
+    float dist;
+    vec3 color;
+    vec3 normal;
+};
 
 /* Coordinate and unit utils */
 vec2 coord(in vec2 p) {
@@ -52,25 +66,10 @@ vec3 rayDir(out vec3 rayOrigin) {
     return camera * normalize(vec3(st, 2.5));
 }
 
-float fresnel (float n1, float n2, vec3 normal, vec3 incident)
-{
-  float r0 = (n1 - n2) / (n1 + n2);
-  r0 *= r0;
-  float cosX = -dot(normal, incident);
-  if (n1 > n2)
-  {
-    float n = n1 / n2;
-    float sinT2 = pow(n, 2.0) * (1.0-cosX*cosX);
-    if (sinT2 > 1.0) {
-      return 1.0;
-    }
-    cosX = sqrt(1.0 - sinT2);
-  }
-  float x = 1.0 - cosX;
-  float ret = r0 + (1.0 - r0) * pow(x, 5.0);
-
-  ret = (max(n1, n2) + (1.0 - max(n1, n2)) * ret);
-  return ret;
+float schlick(vec3 rayDir, vec3 normal, float r1, float r2) {
+    float r = (r1-r2) / (r1+r2);
+    r *= r;
+    return r+(1.0-r)*pow(1.0-abs(dot(normal, rayDir)), 5.0);
 }
 
 //https://iquilezles.org/articles/distfunctions/
@@ -91,115 +90,117 @@ float opOnion( float sdf, float thickness )
     return abs(sdf)-thickness;
 }
 
-vec3 coreNormal(vec3 p){
-  return normalize(vec3(
-    sdSphere(p + vec3(+0.05, 0.0, 0.0), 1.0) -
-    sdSphere(p + vec3(-0.05, 0.0, 0.0), 1.0) ,
-    sdSphere(p + vec3(0.0, +0.05, 0.0), 1.0) -
-    sdSphere(p + vec3(0.0, -0.05, 0.0), 1.0) ,
-    sdSphere(p + vec3(0.0, 0.0, +0.05), 1.0) -
-    sdSphere(p + vec3(0.0, 0.0, -0.05), 1.0)
-  ));
+vec3 opFog(vec3 color, vec3 fogColor, float dist) {
+    float v = 1.2; 
+    float s = dist;
+    float attenuation = exp(-v * s);
+    vec3 radiance = color * attenuation + (fogColor * (1.0 - attenuation)) / v;
+    return radiance;
 }
 
-vec4 innerCore(vec3 pos, vec3 center) {
-    float radius = 0.5;
+SdfObject outerCore(vec3 center, vec3 pos, out vec3 rayDir) {
+    float radius = 1.0;
     float dist = sdSphere(center - pos, radius);
-    vec3 color = vec3(0.8392, 0.4627, 0.3686);
-    return vec4(color, dist);
+    vec3 color = vec3(0.84, 0.68, 0.37);
+    vec3 normal = sdfnormal(sdSphere, pos, radius);
+    SdfObject object;
+    object.type = REFRACT;
+    object.dist = opOnion(dist, 0.0);
+    object.color = color;
+    object.normal = normal;
+    return object;
 }
 
-// vec4 core(vec3 pos, out vec3 rayDir) {
-//     float radius = 1.0;
-//     vec3 center = vec3(0, 0, 0);
-//     float outterDist = sdSphere(center - pos, radius);
-//     vec3 outterColor = vec3(0.84, 0.68, 0.37);
-
-//     if (outterDist < EPSILON) {
-//         float ior = 0.9;
-//         vec3 normal = coreNormal(pos);
-
-//         if(dot(normal, rayDir.xyz) > 0.0){
-//             normal = -normal;
-//             ior = 1.0 / ior;
-//   	    }
-
-//         float fresnel = fresnel(ior, 1.0 / ior, normal, rayDir.xyz);
-//         vec3 innerDir = refract(rayDir.xyz, normal, fresnel);
-//         vec3 innerPos = pos;
-//         vec3 intersectPos = pos;
-
-//         for (int i = 0; i < 100; i++) {
-//             if (sdSphere(center - innerPos, radius) > EPSILON) break;
-//             vec4 result = innerCore(innerPos, center);
-
-//             innerPos = innerPos + normalize(innerDir) * result.w;
-
-//             if (result.w < EPSILON) {
-//                 float v = 200.0;
-//                 float s = length(innerPos - intersectPos)/300.0;
-//                 float attenuation = exp(-v * s);
-//                 outterColor = result.xyz * attenuation + (outterColor * (1.0 - attenuation)) / v;
-                
-//                 break;
-//             }
-//         }
-//     } 
-
-//     return vec4(outterColor, outterDist);
-// }
-
-vec4 core(vec3 pos, out vec3 rayDir) {
-    vec3 center = vec3(0, 0, 0);
-    float outterDist = sdSphere(center - pos, 1.0);
-    vec3 outterColor = vec3(0.84, 0.68, 0.37);
-
-    if (outterDist < 0.0) {
-        float ior = 0.9;
-        vec3 normal = coreNormal(pos);
-
-        if(dot(normal, rayDir.xyz) > 0.0){
-            normal = -normal;
-            ior = 1.0 / ior;
-  	    }
-        float fresnel = fresnel(ior, 1.0 / ior, normal, rayDir.xyz);
-        rayDir = refract(rayDir.xyz, normal, fresnel);
-    }
-
-    float innerDist = sdSphere(center - pos, 0.75);
-    vec3 innerColor = vec3(0.8392, 0.4627, 0.3686);
-    return vec4(outterColor,opOnion(outterDist, 0.001));
+SdfObject innerCore(vec3 center, vec3 pos, vec3 rayDir) {
+    float radius = 0.55;
+    float dist = sdSphere(center + pos, radius);
+    vec3 color = vec3(0.702, 0.2863, 0.0471);
+    vec3 normal = sdfnormal(sdSphere, pos, radius);
+    SdfObject object;
+    object.type = SOLID;
+    object.dist = dist;
+    object.color = color;
+    object.normal = normal;
+    return object;
 }
 
-vec3 rayMarch(vec3 rayOrigin, vec3 rayDir) {
-    float dist;
-    int nStep = 0;
+SdfObject scene(vec3 pos, out vec3 rayDir) {
+    vec3 center = vec3(0);
+    SdfObject outerCore = outerCore(center, pos, rayDir);
+    SdfObject innerCore = innerCore(center, pos, rayDir);
+    if (outerCore.dist < innerCore.dist) 
+          return outerCore;
+    return innerCore;
+}
+
+SdfObject rayMarch(vec3 rayOrigin, out vec3 rayDir) {
+    float dist = 0.01;
     vec3 color;
 
     vec3 pos = rayOrigin;
 
     for (int i = 0; i < MAX_STEP; i++) {
-        vec4 result = core(pos, rayDir);
+        pos = rayOrigin + normalize(rayDir) * dist;
+        
+        SdfObject hit = scene(pos, rayDir);
+        dist += hit.dist;
 
-        pos = pos + normalize(rayDir) * result.w;
-        nStep++;
-
-        if (result.w < EPSILON) {
-            return result.xyz;
+        if (abs(hit.dist) < EPSILON) {
+            hit.dist = dist;
+            return hit;
         }
     }
-    return vec3(
+    vec3 bgColor = vec3(
         abs(cos(st.x + mx.x)), 
         abs(sin(st.y + mx.y)), 
         abs(sin(u_time))
-    );;
+    );
+    vec3 w = vec3(0.4392, 0.4392, 0.4392);
+    return SdfObject(BACKGROUND, dist, w, vec3(0.0));
 }
 
 void main() {
     vec3 rayOrigin;
     vec3 rayDir = rayDir(rayOrigin);
+    vec3 color;
+    vec3 outerColor;
+    float fresnel;
 
-    vec3 color = rayMarch(rayOrigin, rayDir);
+    float v = 1.2;
+
+    SdfObject hit = rayMarch(rayOrigin, rayDir);
+
+    float IOR = 1.33;
+
+    if (hit.type == REFRACT) {
+        vec3 normal = hit.normal;
+        fresnel = schlick(rayDir, normal, IOR, 1.0);
+        color += hit.color * fresnel;
+        outerColor = hit.color;
+        
+        vec3 pos = rayOrigin + rayDir * hit.dist;
+        vec3 rayDirIn = refract(rayDir, normal, 1.0 / IOR);
+        pos = pos - normal * EPSILON;
+        hit = rayMarch(pos, rayDirIn);
+
+        if (hit.type == REFRACT) {
+            normal = -hit.normal;
+            fresnel = schlick(rayDirIn, normal, 1.0, IOR);
+            color += hit.color * fresnel;
+            outerColor = hit.color;
+            
+            pos = pos + rayDirIn * hit.dist;
+            vec3 rayDirOut = refract(rayDirIn, normal, IOR);
+
+            pos = pos - normal * EPSILON;
+            hit = rayMarch(pos, rayDirOut);
+            color += opFog(hit.color, outerColor, hit.dist);
+        } else {
+            color += opFog(hit.color, outerColor, hit.dist);
+        }
+    } else {
+        color = hit.color;
+    }
 
     gl_FragColor = vec4(color, 1.0);
 }
