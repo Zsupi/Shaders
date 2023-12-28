@@ -5,14 +5,15 @@
 #define PI_TWO			1.570796326794897
 #define PI				3.141592653589793
 #define TWO_PI			6.283185307179586
-#define EPSILON			0.0001
+#define EPSILON			0.00001
 #define N_SPHEARE       5
 #define MAX_STEP        1000
-#define MAX_BOUNCE      5
+#define MAX_BOUNCE      7
 
 #define REFLECT         1
 #define REFRACT         2
 #define SOLID           3
+#define BG              4
 
 #define rx 1.0 / min(u_resolution.x, u_resolution.y)
 #define uv gl_FragCoord.xy / u_resolution.xy
@@ -29,6 +30,11 @@ struct SdfObject {
     float dist;
     vec3 color;
     vec3 normal;
+};
+
+struct Light {
+    vec3 position;
+    vec3 powerDensity;
 };
 
 /* Coordinate and unit utils */
@@ -60,7 +66,7 @@ mat3 setCamera(vec3 cameraPos, in vec3 lookat, float cr )
 
 vec3 rayDir(out vec3 rayOrigin) {
     vec3 lookat = vec3(0.1);
-    rayOrigin = lookat + vec3(15.5 * cos(0.1 * u_time + 10.0 * mx.x), 4.2, 15.5 * sin(0.1 * u_time + 10.0 * mx.x));
+    rayOrigin = lookat + vec3(15.5 * cos(PI + 0.8 ), 4.2, 15.5 * sin(PI + 0.8));
     mat3 camera = setCamera(rayOrigin, lookat, 0.0);
     return camera * normalize(vec3(st, 2.5));
 }
@@ -117,7 +123,11 @@ float opOnion( float sdf, float thickness )
 }
 
 float opDistort(vec3 p) {
-    return sin(p.x * 3.3 + u_time) * 0.03 + cos(p.y * 3.3 + u_time)*0.03;
+    return sin(p.x * 2.3 * cos(u_time)*1.4) * 0.01 + cos(p.y * 5.3 * sin(u_time)*1.4) * 0.015;
+}
+
+float opDistortStabil(vec3 p) {
+    return sin(p.x * 9.3) * 0.01 + cos(p.y * 11.3) * 0.015;
 }
 
 float sdCutout(vec3 p, float size) {
@@ -138,9 +148,9 @@ vec3 opFog(vec3 color, vec3 fogColor, float dist) {
 
 SdfObject outerCore(vec3 center, vec3 pos) {
     
-    float radius = 1.0;
-    float dist = sdSphere(center - pos, radius) + opDistort(center -pos);
-    vec3 color = vec3(0.84, 0.68, 0.37);
+    float radius = 1.2;
+    float dist = sdSphere(center - pos, radius) + opDistort(center - pos);
+    vec3 color = vec3(0.9137, 0.5765, 0.1333);
     vec3 normal = sdfnormal(sdSphere, center - pos, radius);
     SdfObject object;
     object.type = REFRACT;
@@ -151,7 +161,7 @@ SdfObject outerCore(vec3 center, vec3 pos) {
 }
 
 SdfObject innerCore(vec3 center, vec3 pos) {
-    float radius = 0.72;
+    float radius = 0.9;
     float dist = sdSphere(center - pos, radius) + opDistort(center - pos);
     vec3 color = vec3(0.702, 0.2863, 0.0471);
     vec3 normal = sdfnormal(sdSphere, center - pos, radius);
@@ -185,7 +195,7 @@ SdfObject cutoutPlanet(vec3 center, vec3 pos) {
 }
 
 SdfObject basePlanet(vec3 center, vec3 pos, float radius) {
-    float dist = sdSphere(center - pos, radius);
+    float dist = sdSphere(center - pos, radius) + opDistortStabil(pos);
     vec3 color = vec3(0.0706, 0.7451, 0.4667);
     vec3 normal = sdfnormal(sdSphere, center - pos, radius);
     SdfObject object;
@@ -198,11 +208,11 @@ SdfObject basePlanet(vec3 center, vec3 pos, float radius) {
 
 SdfObject planet(vec3 center, vec3 pos) {
     SdfObject base = basePlanet(center, pos, 1.5);
-    SdfObject insideCutout = basePlanet(center, pos, 1.4);
+    SdfObject insideCutout = basePlanet(center, pos, 1.45);
     SdfObject outsideCutout = cutoutPlanet(pos, vec3(0.2, 1.2, -0.9));
-    //SdfObject result = opSubtraction(base, insideCutout);
-    SdfObject result = opSubtraction(base, outsideCutout);
-    result.dist = opOnion(result.dist, 0.02);
+    SdfObject cutout = opUnion(outsideCutout, insideCutout);
+    SdfObject result = opSubtraction(base, cutout);
+    result.dist = opOnion(result.dist, 0.01);
     return result;
 }
 
@@ -210,7 +220,6 @@ SdfObject scene(vec3 pos) {
     vec3 center = vec3(0);
     SdfObject core = core(center, pos);
     SdfObject planet = planet(center, pos);
-    //return core;
     return opUnion(core, planet);
 }
 
@@ -231,26 +240,32 @@ SdfObject rayMarch(vec3 rayOrigin, vec3 rayDir) {
             return hit;
         }
     }
-    vec3 bgColor = vec3(
-        abs(cos(st.x + mx.x)), 
-        abs(sin(st.y + mx.y)), 
-        abs(sin(u_time))
-    );
-    vec3 w = vec3(0.4392, 0.4392, 0.4392);
-    return SdfObject(SOLID, dist, w, vec3(0.0));
+    vec3 bgColor = vec3(0.0, 0.1137, 0.0902);
+    
+    // = vec3(
+    //     abs(cos(st.x + mx.x)), 
+    //     abs(sin(st.y + mx.y)), 
+    //     abs(sin(u_time))
+    // );
+    return SdfObject(BG, dist, bgColor, vec3(0.0));
 }
 
-vec3 shade(vec3 powerDensity, vec3 normal, vec3 lightPos, vec3 e, vec3 hit, vec3 materialColor) {
+vec3 shade(SdfObject hit, Light light, vec3 rayOrigin, vec3 rayDir) {
   
-  float ks = 0.8;
-  float shininess = 1000.0;
 
-  vec3 lightDir = normalize(lightPos - hit);
-  vec3 viewDir = normalize(hit.xyz - e);
+  vec3 hitPos = rayOrigin + rayDir * hit.dist;
 
-  float cosa = clamp( dot(lightDir, normal), 0.0, 1.0);
+  float ks = 0.10;
+  float shininess = 5.0;
 
-  return powerDensity * cosa * materialColor + powerDensity * pow(clamp(dot(normalize(viewDir + lightDir), normal), 0.0, 1.0), shininess) * ks;
+  vec3 lightDir = normalize(light.position - hitPos);
+  vec3 viewDir = normalize(hitPos - rayOrigin);
+
+  float cosa = clamp( dot(lightDir, hit.normal), 0.0, 1.0);
+
+  return light.powerDensity * cosa * hit.color 
+        + light.powerDensity * pow(clamp(dot(normalize(viewDir + lightDir), hit.normal), 0.0, 1.0), shininess) * ks
+        + hit.color * 0.10;
 }
 
 void main() {
@@ -259,7 +274,12 @@ void main() {
     vec3 color;
     vec3 pos = rayOrigin;
 
-    // for refraction & fog
+    //Light
+    Light light;
+    light.position = vec3(-0.1, -3.2, 3.1);
+    light.powerDensity = vec3(0.93, 0.84, 0.62);
+
+    //For refraction & fog
     vec3 outerColor;
     bool applyFog = false;
     float v = 1.2;
@@ -270,10 +290,16 @@ void main() {
 
         if (hit.type == SOLID) {
             if (applyFog) {
-                color += opFog(hit.color, outerColor, 0.3);
+                hit.color = shade(hit, light, rayOrigin, rayDir);
+                color = opFog(hit.color, outerColor, 0.5);
                 break;
             }
-            color += hit.color;
+            color += shade(hit, light, rayOrigin, rayDir);
+            //color += hit.color;
+            break;
+        }
+        if (hit.type == BG) {
+            color = hit.color;
             break;
         }
         if (hit.type == REFRACT) {
@@ -284,8 +310,9 @@ void main() {
             }
 
             float fresnel = schlick(rayDir, normal, IOR, 1.0);
-            color += hit.color * fresnel;
             outerColor = hit.color;
+            hit.color = hit.color * fresnel;
+            color += shade(hit, light, rayOrigin, rayDir);
 
             pos = pos + rayDir * hit.dist;
             pos = pos - normal * EPSILON * 3.0;
