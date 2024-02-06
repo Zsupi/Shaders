@@ -71,9 +71,35 @@ vec3 rayDir(out vec3 rayOrigin) {
     return camera * normalize(vec3(st, 2.5));
 }
 
-float snoise(vec3 p) {
-    return sin(dot(p, vec3(12.9898, 78.233, 45.543))) * 43758.5453;
+float snoise(vec2 p) {
+    return sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453;
 }
+
+// https://github.com/shawnlawson/The_Force/blob/b28befa00fc8c2c128945ee36c55df4e1bb8416d/shaders/header.frag#L53C1-L65C2
+vec2 rhash(vec2 p) {
+    mat2 myt = mat2(.12121212,.13131313,-.13131313,.12121212);
+    vec2 mys = vec2(1e4, 1e6);
+    p *= myt;
+    p *= mys;
+    return  fract(fract(p/mys)*p);
+}
+
+// https://github.com/shawnlawson/The_Force/blob/b28befa00fc8c2c128945ee36c55df4e1bb8416d/shaders/header.frag#L186C1-L200C1
+float voronoi(vec2 point)
+{
+    vec2 p = floor( point );
+    vec2 f = fract( point );
+    float res = 0.0;
+    for( int j=-1; j<=1; j++ ) {
+        for( int i=-1; i<=1; i++ ) {
+            vec2 b = vec2( i, j );
+            vec2 r = vec2( b ) - f + rhash( p + b);
+            res += 1./pow(dot(r,r),8.);
+        }
+    }
+    return pow(1./res, 0.0625);
+}
+
 
 float schlick(vec3 rayDir, vec3 normal, float r1, float r2) {
     float r = (r1-r2) / (r1+r2);
@@ -123,11 +149,11 @@ float opOnion( float sdf, float thickness )
 }
 
 float opDistort(vec3 p) {
-    return sin(p.x * 2.3 * cos(u_time)*1.4) * 0.01 + cos(p.y * 5.3 * sin(u_time)*1.4) * 0.015;
+    return tan(p.x * 0.3 * cos(u_time * 0.8)*0.4) * 0.01 + sin(p.y * 2.7 * sin(u_time)*1.2) * 0.02;
 }
 
 float opDistortStabil(vec3 p) {
-    return sin(p.x * 9.3) * 0.01 + cos(p.y * 11.3) * 0.015;
+    return sin(p.x * 4.3) * 0.02 + cos(p.y * 15.3) * 0.015;
 }
 
 float sdCutout(vec3 p, float size) {
@@ -147,11 +173,11 @@ vec3 opFog(vec3 color, vec3 fogColor, float dist) {
 }
 
 SdfObject outerCore(vec3 center, vec3 pos) {
-    
+    vec3 hitPos = center - pos;
     float radius = 1.2;
-    float dist = sdSphere(center - pos, radius) + opDistort(center - pos);
+    float dist = sdSphere(hitPos, radius) + opDistort(hitPos);
     vec3 color = vec3(0.9137, 0.5765, 0.1333);
-    vec3 normal = sdfnormal(sdSphere, center - pos, radius);
+    vec3 normal = sdfnormal(sdSphere, hitPos, radius);
     SdfObject object;
     object.type = REFRACT;
     object.dist = opOnion(dist, 0.0);
@@ -161,10 +187,15 @@ SdfObject outerCore(vec3 center, vec3 pos) {
 }
 
 SdfObject innerCore(vec3 center, vec3 pos) {
-    float radius = 0.9;
-    float dist = sdSphere(center - pos, radius) + opDistort(center - pos);
+    vec3 hitPos = center - pos;
+    float radius = 1.05;
+    float dist = sdSphere(hitPos, radius);
+    if (abs(dist) < 1.0) {
+        dist += abs(voronoi(hitPos.xy * 2.15 + vec2(u_time*0.3)) * 0.06);
+    }
+    
     vec3 color = vec3(0.702, 0.2863, 0.0471);
-    vec3 normal = sdfnormal(sdSphere, center - pos, radius);
+    vec3 normal = sdfnormal(sdSphere, hitPos, radius);
     SdfObject object;
     object.type = SOLID;
     object.dist = dist;
@@ -184,7 +215,7 @@ SdfObject core(vec3 center, vec3 pos) {
 SdfObject cutoutPlanet(vec3 center, vec3 pos) {
     float radius = 1.2;
     float dist = sdSphere(center - pos, radius);
-    vec3 color = vec3(0.0706, 0.7451, 0.4667);
+    vec3 color = vec3(0.102, 0.702, 0.451);
     vec3 normal = sdfnormal(sdSphere, center - pos, radius);
     SdfObject object;
     object.type = SOLID;
@@ -195,9 +226,16 @@ SdfObject cutoutPlanet(vec3 center, vec3 pos) {
 }
 
 SdfObject basePlanet(vec3 center, vec3 pos, float radius) {
-    float dist = sdSphere(center - pos, radius) + opDistortStabil(pos);
-    vec3 color = vec3(0.0706, 0.7451, 0.4667);
+    float dist = sdSphere(center - pos, radius);
+    float disslocation;
+    if (abs(dist) < 1.0) {
+        // TODO uv coordinate instead of pos
+        disslocation = voronoi(pos.xy * 2.15 +vec2(-11.12, 2.2)) * 0.11;
+        dist += disslocation;
+    }
     vec3 normal = sdfnormal(sdSphere, center - pos, radius);
+    vec3 color = vec3(0.3098, 0.902, 0.4078);
+
     SdfObject object;
     object.type = SOLID;
     object.dist = dist;
@@ -241,14 +279,10 @@ SdfObject rayMarch(vec3 rayOrigin, vec3 rayDir) {
         }
     }
     vec3 bgColor = vec3(0.0, 0.1137, 0.0902);
-    
-    // = vec3(
-    //     abs(cos(st.x + mx.x)), 
-    //     abs(sin(st.y + mx.y)), 
-    //     abs(sin(u_time))
-    // );
     return SdfObject(BG, dist, bgColor, vec3(0.0));
 }
+
+//Volumetric light: https://www.shadertoy.com/view/ll2cWt
 
 vec3 shade(SdfObject hit, Light light, vec3 rayOrigin, vec3 rayDir) {
   
